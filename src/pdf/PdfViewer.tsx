@@ -35,9 +35,11 @@ type Props = {
   // Rectangles to mark: all subtly, the active ones strongly.
   highlights?: Highlight[]
   focus?: Focus | null
-  // Called for a click on a link annotation. Returning true means the click
-  // was handled and PDF.js must not follow the link.
-  onLinkClick?: (annotationId: string, pageIndex: number) => boolean
+  // Called for a click on a link annotation, with the link's target as
+  // PDF.js writes it into the href ("#cite.key" for a named destination).
+  // Returning true means the click was handled and PDF.js must not follow
+  // the link.
+  onLinkClick?: (annotationId: string, pageIndex: number, href: string) => boolean
   // Shown at the start of the toolbar.
   children?: ReactNode
 }
@@ -142,7 +144,8 @@ export function PdfViewer({ url, highlights, focus, onLinkClick, children }: Pro
       const pageNumber = annotation?.closest<HTMLElement>('.page')?.dataset.pageNumber
       if (!annotation || !pageNumber) return
       const id = annotation.dataset.annotationId!
-      if (onLinkClickRef.current?.(id, Number(pageNumber) - 1)) {
+      const href = annotation.querySelector('a')?.getAttribute('href') ?? ''
+      if (onLinkClickRef.current?.(id, Number(pageNumber) - 1, href)) {
         event.preventDefault()
         event.stopPropagation()
       }
