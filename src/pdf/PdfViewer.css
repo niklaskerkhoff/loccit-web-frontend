@@ -1,3 +1,13 @@
+/* Colours of marked passages. Change them here to taste. The marks are
+   multiplied onto the page, so text underneath stays as dark as it is. */
+:root {
+  /* every passage of the check */
+  --loccit-mark-fill: rgb(255 236 140 / 0.22);
+  /* the passage shown right now: a little more fill and a fine outline */
+  --loccit-mark-current-fill: rgb(255 222 90 / 0.3);
+  --loccit-mark-current-outline: 1px solid rgb(214 150 0 / 0.75);
+}
+
 /* The scroll container PDF.js renders into; it must be absolutely positioned. */
 .pdf-scroll-container {
   position: absolute;
@@ -12,22 +22,25 @@
   box-sizing: content-box;
 }
 
-/* Marked passages, drawn over the page and under the pointer. */
+/* Marked passages, drawn over the page and under the pointer. The layer as
+   a whole is multiplied onto the page: on the single marks, the blending
+   would only reach the empty layer and lay a veil over the text. */
 .loccit-highlights {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 1;
+  mix-blend-mode: multiply;
 }
 
 .loccit-highlight {
   position: absolute;
-  background: rgb(255 221 87 / 0.3);
+  background: var(--loccit-mark-fill);
   border-radius: 2px;
-  mix-blend-mode: multiply;
 }
 
 .loccit-highlight.active {
-  background: rgb(255 170 0 / 0.55);
-  outline: 1.5px solid rgb(214 120 0 / 0.9);
+  background: var(--loccit-mark-current-fill);
+  outline: var(--loccit-mark-current-outline);
+  outline-offset: 0.5px;
 }
