@@ -10,6 +10,7 @@ const FIT_WIDTH = 'page-width'
 const ZOOM_STEP = 1.2
 const MIN_SCALE = 0.25
 const MAX_SCALE = 5
+const DESTROY_TIMEOUT_MS = 10_000
 
 type Props = {
   url: string
@@ -109,9 +110,18 @@ export function PdfViewer({ url, onLinkClick, children }: Props) {
       cancelled = true
       resizeObserver.disconnect()
       viewerRef.current = null
-      viewer.setDocument(null)
-      loadingTask.destroy()
       container.remove()
+      // PDF.js may still be fetching the pages of a document that was just
+      // opened. Taking the document away under it makes every pending page
+      // fail loudly, so let it finish first, but do not wait forever.
+      const pagesLoaded: Promise<unknown> = viewer.pagesPromise ?? Promise.resolve()
+      const timeout = new Promise(resolve => setTimeout(resolve, DESTROY_TIMEOUT_MS))
+      Promise.race([pagesLoaded, timeout])
+        .catch(() => {})
+        .then(() => {
+          viewer.setDocument(null)
+          loadingTask.destroy()
+        })
     }
   }, [url])
 
