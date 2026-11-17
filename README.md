@@ -56,5 +56,11 @@ Other scripts: `npm run lint`, `npm run format`.
 Routes are hash routes (`#/doc/<id>`) and asset URLs are relative, so the
 build needs no server-side routing.
 
-Keyboard: `J` / `K` (or Alt+↓ / Alt+↑) step through the passages, `←` / `→`
-through the sources of a citation group.
+Keyboard: `J` / `K` (or Alt+↓ / Alt+↑) step through the passages in reading
+order (sources as in the citation group, then page, then sentence), `S`
+returns to the strongest passage, `←` / `→` step through the sources of a
+citation group. Pinch on the trackpad or Cmd/Ctrl+wheel zooms a viewer
+around the pointer.
+
+Other scripts: `npm test` runs the unit tests in `tests/` with Node's own
+test runner.
