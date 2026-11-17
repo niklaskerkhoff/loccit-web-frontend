@@ -1,0 +1,186 @@
+import { Box, Flex, IconButton, Spinner, Text } from '@chakra-ui/react'
+import { type ReactNode, useEffect, useRef, useState } from 'react'
+import { LuMinus, LuMoveHorizontal, LuPlus } from 'react-icons/lu'
+import { loadPdf, pdfjsLib } from './pdfjs'
+import { EventBus, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs'
+import 'pdfjs-dist/web/pdf_viewer.css'
+import './PdfViewer.css'
+
+const FIT_WIDTH = 'page-width'
+const ZOOM_STEP = 1.2
+const MIN_SCALE = 0.25
+const MAX_SCALE = 5
+
+type Props = {
+  url: string
+  // Called for a click on a link annotation. Returning true means the click
+  // was handled and PDF.js must not follow the link.
+  onLinkClick?: (annotationId: string, pageIndex: number) => boolean
+  // Shown at the start of the toolbar.
+  children?: ReactNode
+}
+
+// A full PDF.js viewer: lazy page rendering, text selection, working internal
+// links, zoom.
+export function PdfViewer({ url, onLinkClick, children }: Props) {
+  const hostRef = useRef<HTMLDivElement>(null)
+  const viewerRef = useRef<PDFViewer | null>(null)
+  const onLinkClickRef = useRef(onLinkClick)
+  const [loaded, setLoaded] = useState<{ url: string; error: string | null } | null>(null)
+  const [page, setPage] = useState({ current: 1, total: 0 })
+  const [scale, setScale] = useState(1)
+
+  useEffect(() => {
+    onLinkClickRef.current = onLinkClick
+  })
+
+  useEffect(() => {
+    const host = hostRef.current!
+    // PDF.js needs an absolutely positioned scroll container of its own. It
+    // is created here rather than rendered by React, so that each viewer
+    // instance gets a fresh element with no listeners left on it.
+    const container = document.createElement('div')
+    container.className = 'pdf-scroll-container'
+    const pages = document.createElement('div')
+    pages.className = 'pdfViewer'
+    container.append(pages)
+    host.append(container)
+
+    const eventBus = new EventBus()
+    const linkService = new PDFLinkService({ eventBus })
+    const viewer = new PDFViewer({
+      container,
+      viewer: pages,
+      eventBus,
+      linkService,
+      annotationMode: pdfjsLib.AnnotationMode.ENABLE,
+    })
+    linkService.setViewer(viewer)
+    viewerRef.current = viewer
+
+    eventBus.on('pagesinit', () => {
+      viewer.currentScaleValue = FIT_WIDTH
+      setPage({ current: 1, total: viewer.pagesCount })
+    })
+    eventBus.on('pagechanging', ({ pageNumber }: { pageNumber: number }) =>
+      setPage(page => ({ ...page, current: pageNumber })),
+    )
+    eventBus.on('scalechanging', ({ scale }: { scale: number }) => setScale(scale))
+
+    // Runs before PDF.js's own handler on the link element.
+    const onClick = (event: MouseEvent) => {
+      const annotation = (event.target as Element).closest<HTMLElement>('[data-annotation-id]')
+      const pageNumber = annotation?.closest<HTMLElement>('.page')?.dataset.pageNumber
+      if (!annotation || !pageNumber) return
+      const id = annotation.dataset.annotationId!
+      if (onLinkClickRef.current?.(id, Number(pageNumber) - 1)) {
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+    container.addEventListener('click', onClick, true)
+
+    // Keep "fit width" fitting when the pane is resized.
+    const resizeObserver = new ResizeObserver(() => {
+      if (viewer.pagesCount && viewer.currentScaleValue === FIT_WIDTH) {
+        viewer.currentScaleValue = FIT_WIDTH
+      }
+    })
+    resizeObserver.observe(container)
+
+    let cancelled = false
+    const loadingTask = loadPdf(url)
+    loadingTask.promise.then(
+      pdf => {
+        if (cancelled) return
+        viewer.setDocument(pdf)
+        linkService.setDocument(pdf, null)
+        setLoaded({ url, error: null })
+      },
+      (error: Error) => {
+        if (!cancelled) setLoaded({ url, error: error.message })
+      },
+    )
+
+    return () => {
+      cancelled = true
+      resizeObserver.disconnect()
+      viewerRef.current = null
+      viewer.setDocument(null)
+      loadingTask.destroy()
+      container.remove()
+    }
+  }, [url])
+
+  const zoom = (factor: number) => {
+    const viewer = viewerRef.current
+    if (!viewer) return
+    const next = Math.min(MAX_SCALE, Math.max(MIN_SCALE, viewer.currentScale * factor))
+    viewer.currentScaleValue = String(next)
+  }
+  const fitWidth = () => {
+    if (viewerRef.current) viewerRef.current.currentScaleValue = FIT_WIDTH
+  }
+
+  const state = loaded?.url === url ? loaded : null
+  return (
+    <Flex direction='column' height='100%' minWidth={0}>
+      <Flex
+        align='center'
+        gap={1}
+        px={2}
+        height='40px'
+        flexShrink={0}
+        borderBottomWidth='1px'
+        bg='bg.subtle'
+      >
+        <Box flex={1} minWidth={0}>
+          {children}
+        </Box>
+        <Text fontSize='sm' color='fg.muted' whiteSpace='nowrap' mr={2}>
+          {page.total ? `S. ${page.current} / ${page.total}` : ''}
+        </Text>
+        <IconButton
+          aria-label='Verkleinern'
+          size='xs'
+          variant='ghost'
+          onClick={() => zoom(1 / ZOOM_STEP)}
+        >
+          <LuMinus />
+        </IconButton>
+        <Text fontSize='sm' width='3.2em' textAlign='center'>
+          {Math.round(scale * 100)} %
+        </Text>
+        <IconButton
+          aria-label='Vergrößern'
+          size='xs'
+          variant='ghost'
+          onClick={() => zoom(ZOOM_STEP)}
+        >
+          <LuPlus />
+        </IconButton>
+        <IconButton
+          aria-label='An Breite anpassen'
+          title='An Breite anpassen'
+          size='xs'
+          variant='ghost'
+          onClick={fitWidth}
+        >
+          <LuMoveHorizontal />
+        </IconButton>
+      </Flex>
+      <Box ref={hostRef} position='relative' flex={1} minHeight={0} bg='gray.200'>
+        {!state && (
+          <Flex position='absolute' inset={0} align='center' justify='center' zIndex={1}>
+            <Spinner />
+          </Flex>
+        )}
+        {state?.error && (
+          <Flex position='absolute' inset={0} align='center' justify='center' zIndex={1} p={6}>
+            <Text color='fg.error'>Das PDF konnte nicht geladen werden: {state.error}</Text>
+          </Flex>
+        )}
+      </Box>
+    </Flex>
+  )
+}

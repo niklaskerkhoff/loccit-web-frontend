@@ -1,0 +1,6 @@
+/* The scroll container PDF.js renders into; it must be absolutely positioned. */
+.pdf-scroll-container {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+}
