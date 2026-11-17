@@ -1,73 +1,53 @@
-# React + TypeScript + Vite
+# loccit web frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The browser UI of loccit: the thesis on the left, the cited paper on the
+right. It talks to the [backend](../loccit-backend) only through its HTTP API
+(`/api`, schema at `/api/openapi.json`).
 
-Currently, two official plugins are available:
+Stack: Vite, React, TypeScript, Chakra UI, PDF.js (`pdfjs-dist`) for both
+viewers.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Development
 
-## React Compiler
+Two processes:
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```sh
+# 1. backend, in loccit-backend (conda env loccit-backend)
+python -m loccit
 
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+# 2. frontend, in this folder
+npm install
+npm run dev        # http://localhost:5173, forwards /api to 127.0.0.1:8765
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+## Build
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```sh
+npm run build      # writes dist/
+python -m loccit --frontend /path/to/loccit-web-frontend/dist
 ```
+
+`--frontend` is needed once; the backend remembers the folder in
+`~/.loccit/settings.toml` and serves it from then on, so `python -m loccit`
+alone starts everything and opens the browser. Rebuild after pulling changes.
+
+Other scripts: `npm run lint`, `npm run format`.
+
+## Structure
+
+- `src/api.ts` – the only place that knows the backend; types mirror its
+  OpenAPI schema. `VITE_API_BASE` points it at another origin (e.g. for a
+  desktop shell).
+- `src/pdf/` – `PdfViewer`, a wrapper around the PDF.js viewer components
+  (lazy page rendering, text layer, internal links, zoom). Clicks on link
+  annotations can be intercepted, which is how citations are caught.
+- `src/pages/` – start page (upload, recent documents) and document page
+  (the two columns).
+- `src/components/` – what the right column shows: the paper, "Paper nicht
+  gefunden", or the choice between versions.
+- `src/labels.ts` – German wording for the codes the backend reports.
+- `scripts/copy-pdfjs-assets.mjs` – copies the files PDF.js loads at runtime
+  into `public/pdfjs` (runs before `dev` and `build`).
+
+Routes are hash routes (`#/doc/<id>`) and asset URLs are relative, so the
+build needs no server-side routing.
