@@ -154,3 +154,93 @@ export function documentPdfUrl(document: Document): string {
 export function paperPdfUrl(attachmentKey: string): string {
   return `${API_BASE}/api/papers/${encodeURIComponent(attachmentKey)}/pdf`
 }
+
+// --- checks ------------------------------------------------------------------
+
+export type Model = {
+  id: string
+  label: string
+  // Thinking levels the model accepts, the default first: 'off' or an effort level.
+  levels: string[]
+}
+
+export type Models = {
+  default_model: string
+  models: Model[]
+  has_api_key: boolean
+}
+
+export type Rect = [number, number, number, number]
+
+export type PageRect = { page: number; rect: Rect }
+
+export type Passage = {
+  cite_key: string
+  attachment_key: string
+  page: number
+  start_sentence: number
+  end_sentence: number
+  rects: PageRect[]
+  reason: string
+}
+
+export type Verdict = 'supported' | 'partially_supported' | 'not_found'
+
+export type Run = {
+  id: number
+  model: string
+  thinking: string
+  strategy: string
+  prompt_version: string
+  started_at: string
+  duration_ms: number
+  input_tokens: number
+  output_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  cost_usd: number
+  verdict: Verdict
+  passages: Passage[]
+}
+
+export type Check = {
+  // The checked paragraph, the citation marked with <cite_here>…</cite_here>.
+  context: string | null
+  checked_keys: string[]
+  missing_keys: string[]
+  run: Run | null
+  error: { code: string; detail: string } | null
+}
+
+export function getModels(): Promise<Models> {
+  return request('/api/models')
+}
+
+function checkPath(documentId: number, groupId: number): string {
+  return `/api/documents/${documentId}/groups/${groupId}/check`
+}
+
+// The latest stored run for the combination; never calls a model.
+export function getCheck(
+  documentId: number,
+  groupId: number,
+  model: string,
+  thinking: string,
+): Promise<Check> {
+  const query = new URLSearchParams({ model, thinking })
+  return request(`${checkPath(documentId, groupId)}?${query}`)
+}
+
+// Checks now. Resolves when the model's complete answer is stored as a new run.
+export function runCheck(
+  documentId: number,
+  groupId: number,
+  model: string,
+  thinking: string,
+): Promise<Check> {
+  return request(checkPath(documentId, groupId), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model, thinking }),
+  })
+}
