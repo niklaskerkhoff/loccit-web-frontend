@@ -61,6 +61,7 @@ export function DocumentPage({ documentId }: { documentId: number }) {
       .finally(() => setLoading(false))
   }, [documentId])
 
+  const citationsLoaded = data !== null
   // Link annotation ("<page>:<annotation id>") -> the citation it belongs to.
   const citationLinks = useMemo(() => {
     const links = new Map<string, Active>()
@@ -75,13 +76,15 @@ export function DocumentPage({ documentId }: { documentId: number }) {
   }, [data])
 
   const onLinkClick = useCallback(
-    (annotationId: string, pageIndex: number) => {
+    (annotationId: string, pageIndex: number, href: string) => {
       const citation = citationLinks.get(`${pageIndex}:${annotationId}`)
-      if (!citation) return false
+      // Until the citations are loaded, a citation link does nothing rather
+      // than jump to the bibliography.
+      if (!citation) return !citationsLoaded && href.includes('#cite.')
       setActive(citation)
       return true
     },
-    [citationLinks],
+    [citationLinks, citationsLoaded],
   )
 
   const group = active ? data?.groups[active.groupId] : undefined
