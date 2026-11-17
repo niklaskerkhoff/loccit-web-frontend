@@ -4,3 +4,10 @@
   inset: 0;
   overflow: auto;
 }
+
+/* PDF.js sizes a page as its content box. Chakra's reset makes everything a
+   border box, which would shrink the canvas by the page border and leave it
+   out of register with the text and link layers. */
+.pdfViewer .page {
+  box-sizing: content-box;
+}
