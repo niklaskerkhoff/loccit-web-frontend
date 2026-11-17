@@ -1,6 +1,7 @@
 import { Box, Flex, IconButton, Spinner, Text } from '@chakra-ui/react'
 import { type ReactNode, useEffect, useRef, useState } from 'react'
 import { LuMinus, LuMoveHorizontal, LuPlus } from 'react-icons/lu'
+import type { PageViewport } from 'pdfjs-dist'
 import { loadPdf, pdfjsLib } from './pdfjs'
 import { EventBus, PDFLinkService, PDFViewer } from 'pdfjs-dist/web/pdf_viewer.mjs'
 import 'pdfjs-dist/web/pdf_viewer.css'
@@ -10,9 +11,30 @@ const FIT_WIDTH = 'page-width'
 const ZOOM_STEP = 1.2
 const MIN_SCALE = 0.25
 const MAX_SCALE = 5
+const DESTROY_TIMEOUT_MS = 10_000
+// Space left above a passage the viewer jumps to, in PDF points.
+const FOCUS_MARGIN = 90
+
+type PageRect = [number, number, number, number]
+
+// A marked rectangle, in PDF user space of a 0-based page.
+export type Highlight = { page: number; rect: PageRect; active: boolean }
+
+// A place to scroll to. A new `key` scrolls again, even to the same place.
+export type Focus = { page: number; rect: PageRect; key: string }
+
+// The part of PDF.js's page view the highlight layer needs.
+type PageView = {
+  id: number
+  div: HTMLElement
+  viewport: PageViewport
+}
 
 type Props = {
   url: string
+  // Rectangles to mark: all subtly, the active ones strongly.
+  highlights?: Highlight[]
+  focus?: Focus | null
   // Called for a click on a link annotation. Returning true means the click
   // was handled and PDF.js must not follow the link.
   onLinkClick?: (annotationId: string, pageIndex: number) => boolean
@@ -20,11 +42,52 @@ type Props = {
   children?: ReactNode
 }
 
+function drawHighlights(pageView: PageView, highlights: Highlight[]) {
+  let layer = pageView.div.querySelector<HTMLElement>(':scope > .loccit-highlights')
+  if (!layer) {
+    layer = document.createElement('div')
+    layer.className = 'loccit-highlights'
+    pageView.div.append(layer)
+  }
+  const marks = highlights
+    .filter(highlight => highlight.page === pageView.id - 1)
+    .map(highlight => {
+      const [x0, y0] = pageView.viewport.convertToViewportPoint(
+        highlight.rect[0],
+        highlight.rect[1],
+      )
+      const [x1, y1] = pageView.viewport.convertToViewportPoint(
+        highlight.rect[2],
+        highlight.rect[3],
+      )
+      const mark = document.createElement('div')
+      mark.className = highlight.active ? 'loccit-highlight active' : 'loccit-highlight'
+      mark.style.left = `${Math.min(x0, x1)}px`
+      mark.style.top = `${Math.min(y0, y1)}px`
+      mark.style.width = `${Math.abs(x1 - x0)}px`
+      mark.style.height = `${Math.abs(y1 - y0)}px`
+      return mark
+    })
+  layer.replaceChildren(...marks)
+}
+
+function scrollTo(viewer: PDFViewer, focus: Focus) {
+  // XYZ with no left and no zoom: keep both, put the passage near the top.
+  const top = focus.rect[3] + FOCUS_MARGIN
+  viewer.scrollPageIntoView({
+    pageNumber: focus.page + 1,
+    destArray: [null, { name: 'XYZ' }, null, top, null],
+  })
+}
+
 // A full PDF.js viewer: lazy page rendering, text selection, working internal
-// links, zoom.
-export function PdfViewer({ url, onLinkClick, children }: Props) {
+// links, zoom, and marked passages.
+export function PdfViewer({ url, highlights, focus, onLinkClick, children }: Props) {
   const hostRef = useRef<HTMLDivElement>(null)
   const viewerRef = useRef<PDFViewer | null>(null)
+  const readyRef = useRef(false)
+  const highlightsRef = useRef<Highlight[]>([])
+  const focusRef = useRef<Focus | null>(null)
   const onLinkClickRef = useRef(onLinkClick)
   const [loaded, setLoaded] = useState<{ url: string; error: string | null } | null>(null)
   const [page, setPage] = useState({ current: 1, total: 0 })
@@ -61,7 +124,13 @@ export function PdfViewer({ url, onLinkClick, children }: Props) {
     eventBus.on('pagesinit', () => {
       viewer.currentScaleValue = FIT_WIDTH
       setPage({ current: 1, total: viewer.pagesCount })
+      readyRef.current = true
+      if (focusRef.current) scrollTo(viewer, focusRef.current)
     })
+    // A page loses its highlight layer whenever PDF.js renders it anew.
+    eventBus.on('pagerendered', ({ source }: { source: PageView }) =>
+      drawHighlights(source, highlightsRef.current),
+    )
     eventBus.on('pagechanging', ({ pageNumber }: { pageNumber: number }) =>
       setPage(page => ({ ...page, current: pageNumber })),
     )
@@ -106,11 +175,38 @@ export function PdfViewer({ url, onLinkClick, children }: Props) {
       cancelled = true
       resizeObserver.disconnect()
       viewerRef.current = null
+      readyRef.current = false
+      // PDF.js is still fetching the pages of a document that was just
+      // opened. Destroying it under that makes every page fail loudly, so
+      // wait until the pages are in, but not forever.
+      const pagesLoaded: Promise<unknown> = viewer.pagesPromise ?? Promise.resolve()
+      const timeout = new Promise(resolve => setTimeout(resolve, DESTROY_TIMEOUT_MS))
       viewer.setDocument(null)
-      loadingTask.destroy()
+      Promise.race([pagesLoaded, timeout])
+        .catch(() => {})
+        .then(() => loadingTask.destroy())
       container.remove()
     }
   }, [url])
+
+  useEffect(() => {
+    highlightsRef.current = highlights ?? []
+    const viewer = viewerRef.current
+    if (!viewer || !readyRef.current) return
+    for (let index = 0; index < viewer.pagesCount; index++) {
+      const pageView: PageView | undefined = viewer.getPageView(index)
+      if (pageView?.div.querySelector('canvas')) drawHighlights(pageView, highlightsRef.current)
+    }
+  }, [highlights, url])
+
+  // Declared after the effect that creates the viewer: for a new PDF the
+  // jump waits for `pagesinit`.
+  const focusKey = focus?.key
+  useEffect(() => {
+    focusRef.current = focus ?? null
+    if (focus && viewerRef.current && readyRef.current) scrollTo(viewerRef.current, focus)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `key` stands for the focus
+  }, [focusKey, url])
 
   const zoom = (factor: number) => {
     const viewer = viewerRef.current
