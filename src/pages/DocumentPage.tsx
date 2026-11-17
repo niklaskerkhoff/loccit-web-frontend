@@ -109,8 +109,14 @@ export function DocumentPage({ documentId }: { documentId: number }) {
         {document && !document.has_bib && <Badge>ohne .bib</Badge>}
         {data && data.zotero.status === 'ok' && (
           <>
-            <Badge colorPalette='blue'>{data.groups.length} Zitatstellen</Badge>
-            {missing > 0 && <Badge colorPalette='orange'>{missing} Quellen ohne PDF</Badge>}
+            <Badge colorPalette='blue'>
+              {data.groups.length} {data.groups.length === 1 ? 'Zitatstelle' : 'Zitatstellen'}
+            </Badge>
+            {missing > 0 && (
+              <Badge colorPalette='orange'>
+                {missing} {missing === 1 ? 'Quelle' : 'Quellen'} ohne PDF
+              </Badge>
+            )}
             {choices > 0 && <Badge colorPalette='purple'>{choices} × Auswahl nötig</Badge>}
           </>
         )}
