@@ -124,7 +124,8 @@ export function DocumentPage({ documentId }: { documentId: number }) {
   )
   const passages = check.check?.run?.passages ?? []
 
-  // The arrows run over all passages; the paper follows the passage.
+  // Shows a passage by rank (its index in the strongest-first list); the
+  // paper follows the passage.
   const showPassage = (passage: number) => {
     if (!group || !passages[passage]) return
     const index = citationIndex(group, passages[passage].cite_key)

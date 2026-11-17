@@ -1,8 +1,9 @@
 import { Badge, Box, Button, Flex, IconButton, NativeSelect, Spinner, Text } from '@chakra-ui/react'
 import { Fragment, useState } from 'react'
-import { LuChevronDown, LuChevronUp, LuRefreshCw, LuTriangleAlert } from 'react-icons/lu'
+import { LuChevronDown, LuChevronUp, LuRefreshCw, LuStar, LuTriangleAlert } from 'react-icons/lu'
 import type { Passage, Source } from '../api'
 import { VERDICTS, checkErrorLabel, runSummary, shortLabel, thinkingLabel } from '../labels'
+import { type Ordered, readingPosition } from '../passages'
 import type { CheckController } from '../useCheck'
 
 // Model and thinking level for the next check, and the button that starts it.
@@ -57,20 +58,24 @@ export function CheckControls({ check }: { check: CheckController }) {
 type Props = {
   check: CheckController
   sources: Record<string, Source>
-  // Index of the passage shown, into the run's passages.
+  // Rank of the passage shown: its index in the run's passages, which are
+  // stored strongest first. Rank 0 is the strongest passage.
   passage: number | null
-  onPassage: (index: number) => void
+  // The run's passages in reading order.
+  order: Ordered[]
+  onPassage: (rank: number) => void
+  // Moves `delta` passages on in reading order.
+  onStep: (delta: number) => void
 }
 
 // Verdict, the current passage with its reason, and how the result came about.
-export function CheckBar({ check, sources, passage, onPassage }: Props) {
+export function CheckBar({ check, sources, passage, order, onPassage, onStep }: Props) {
   const [showContext, setShowContext] = useState(false)
   const result = check.check
   const run = result?.run ?? null
   const passages = run?.passages ?? []
   const current: Passage | undefined = passage === null ? undefined : passages[passage]
-  const step = (delta: number) =>
-    onPassage(((passage ?? -1) + delta + passages.length) % passages.length)
+  const position = readingPosition(order, passage)
 
   return (
     <Box px={3} py={2} borderBottomWidth='1px' flexShrink={0} bg='bg.subtle'>
@@ -116,7 +121,7 @@ export function CheckBar({ check, sources, passage, onPassage }: Props) {
                   title='Vorherige Stelle (K oder Alt+↑)'
                   size='xs'
                   variant='ghost'
-                  onClick={() => step(-1)}
+                  onClick={() => onStep(-1)}
                 >
                   <LuChevronUp />
                 </IconButton>
@@ -125,15 +130,32 @@ export function CheckBar({ check, sources, passage, onPassage }: Props) {
                   title='Nächste Stelle (J oder Alt+↓)'
                   size='xs'
                   variant='ghost'
-                  onClick={() => step(1)}
+                  onClick={() => onStep(1)}
                 >
                   <LuChevronDown />
                 </IconButton>
                 <Text fontSize='sm' fontWeight='medium' ml={1}>
-                  {current
-                    ? `Stelle ${passage! + 1} von ${passages.length} · ${shortLabel(current.cite_key, sources[current.cite_key])}, S. ${current.page + 1}`
+                  {current && position
+                    ? `Stelle ${position} von ${passages.length} · ${shortLabel(current.cite_key, sources[current.cite_key])}, S. ${current.page + 1}`
                     : `${passages.length} ${passages.length === 1 ? 'Stelle' : 'Stellen'}`}
                 </Text>
+                {passages.length > 1 && (
+                  <Button
+                    size='2xs'
+                    ml={2}
+                    variant={passage === 0 ? 'subtle' : 'outline'}
+                    colorPalette='orange'
+                    title={
+                      passage === 0
+                        ? 'Das ist die stärkste Stelle'
+                        : 'Zur stärksten Stelle springen (S)'
+                    }
+                    onClick={() => onPassage(0)}
+                  >
+                    <LuStar fill={passage === 0 ? 'currentColor' : 'none'} />
+                    {passage === 0 ? 'stärkste Stelle' : `stärkste: ${readingPosition(order, 0)}`}
+                  </Button>
+                )}
               </Flex>
             )}
             {result!.missing_keys.length > 0 && (

@@ -1,9 +1,10 @@
 import { Badge, Box, Button, Flex, IconButton, NativeSelect, Text } from '@chakra-ui/react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { LuChevronLeft, LuChevronRight, LuCircleHelp, LuTriangleAlert } from 'react-icons/lu'
 import { type CitationGroup, type Source, chooseItem, choosePdf, paperPdfUrl } from '../api'
 import { authorsLabel, shortLabel } from '../labels'
 import { type Focus, type Highlight, PdfViewer } from '../pdf/PdfViewer'
+import { readingOrder, stepInReadingOrder } from '../passages'
 import type { CheckController } from '../useCheck'
 import { CheckBar, CheckControls } from './CheckBar'
 import { PaperNotFound } from './PaperNotFound'
@@ -14,7 +15,8 @@ type Props = {
   sources: Record<string, Source>
   // Which citation of the group is shown.
   index: number
-  // Which passage of the check is the current one.
+  // Rank of the current passage: its index in the run's passages, which are
+  // stored strongest first.
   passage: number | null
   check: CheckController
   reloading: boolean
@@ -34,7 +36,21 @@ export function PaperPane(props: Props) {
   const citation = group.citations[Math.min(index, count - 1)]
   const source = sources[citation.key]
   const run = check.busy ? null : (check.check?.run ?? null)
-  const passageCount = run?.passages.length ?? 0
+  // The arrows follow the papers, not the strength of the passages.
+  const order = useMemo(
+    () =>
+      readingOrder(
+        run?.passages ?? [],
+        group.citations.map(item => item.key),
+      ),
+    [run, group],
+  )
+  const step = useCallback(
+    (delta: number) => {
+      if (order.length) onPassage(stepInReadingOrder(order, passage, delta))
+    },
+    [order, passage, onPassage],
+  )
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -44,8 +60,10 @@ export function PaperPane(props: Props) {
       const key = event.key.toLowerCase()
       const next = key === 'j' || (event.altKey && key === 'arrowdown')
       const previous = key === 'k' || (event.altKey && key === 'arrowup')
-      if (passageCount > 0 && (next || previous)) {
-        onPassage(((passage ?? -1) + (next ? 1 : -1) + passageCount) % passageCount)
+      if (order.length > 0 && (next || previous)) {
+        step(next ? 1 : -1)
+      } else if (order.length > 0 && !event.altKey && key === 's') {
+        onPassage(0)
       } else if (count > 1 && !event.altKey && key === 'arrowleft') {
         onSelect((index + count - 1) % count)
       } else if (count > 1 && !event.altKey && key === 'arrowright') {
@@ -57,7 +75,7 @@ export function PaperPane(props: Props) {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [count, index, passage, passageCount, onSelect, onPassage])
+  }, [count, index, order, step, onSelect, onPassage])
 
   // All passages in the shown paper are marked, the current one strongly.
   const highlights = useMemo<Highlight[]>(
@@ -117,7 +135,14 @@ export function PaperPane(props: Props) {
         )}
         <CheckControls check={check} />
       </Flex>
-      <CheckBar check={check} sources={sources} passage={passage} onPassage={onPassage} />
+      <CheckBar
+        check={check}
+        sources={sources}
+        passage={passage}
+        order={order}
+        onPassage={onPassage}
+        onStep={step}
+      />
       {source && (
         // The key resets "change version" when another citation is selected.
         <SourceView
