@@ -14,6 +14,26 @@ const MAX_SCALE = 5
 const DESTROY_TIMEOUT_MS = 10_000
 // Space left above a passage the viewer jumps to, in PDF points.
 const FOCUS_MARGIN = 90
+// Pinch and Cmd/Ctrl+wheel: zoom factor per unit of wheel delta, and the
+// largest delta one event may contribute (a mouse wheel notch is ~100).
+const WHEEL_ZOOM_SPEED = 0.01
+const MAX_WHEEL_DELTA = 25
+// While a gesture goes on, pages are only stretched; they are drawn anew
+// this long after the last change.
+const GESTURE_DRAWING_DELAY = 400
+
+// Safari's pinch events; not part of the standard DOM types.
+type GestureEvent = UIEvent & { scale: number; clientX: number; clientY: number }
+
+function wheelDelta(event: WheelEvent): number {
+  const pixels =
+    event.deltaMode === WheelEvent.DOM_DELTA_LINE
+      ? event.deltaY * 16
+      : event.deltaMode === WheelEvent.DOM_DELTA_PAGE
+        ? event.deltaY * 400
+        : event.deltaY
+  return Math.max(-MAX_WHEEL_DELTA, Math.min(MAX_WHEEL_DELTA, pixels))
+}
 
 type PageRect = [number, number, number, number]
 
@@ -129,10 +149,13 @@ export function PdfViewer({ url, highlights, focus, onLinkClick, children }: Pro
       readyRef.current = true
       if (focusRef.current) scrollTo(viewer, focusRef.current)
     })
-    // A page loses its highlight layer whenever PDF.js renders it anew.
-    eventBus.on('pagerendered', ({ source }: { source: PageView }) =>
-      drawHighlights(source, highlightsRef.current),
-    )
+    // A page loses its highlight layer whenever PDF.js renders it anew. At
+    // high zoom the event also comes from a detail view of the page, which
+    // has no viewport of its own, so the page is looked up by number.
+    eventBus.on('pagerendered', ({ pageNumber }: { pageNumber: number }) => {
+      const pageView: PageView | undefined = viewer.getPageView(pageNumber - 1)
+      if (pageView) drawHighlights(pageView, highlightsRef.current)
+    })
     eventBus.on('pagechanging', ({ pageNumber }: { pageNumber: number }) =>
       setPage(page => ({ ...page, current: pageNumber })),
     )
@@ -159,6 +182,62 @@ export function PdfViewer({ url, highlights, focus, onLinkClick, children }: Pro
       }
     })
     resizeObserver.observe(container)
+
+    // Zoom with a pinch on the trackpad or Cmd/Ctrl+wheel, keeping the point
+    // under the fingers or the pointer in place. PDF.js rounds the scale to
+    // hundredths, so small steps are collected until they add up.
+    let pendingFactor = 1
+    const zoomAt = (factor: number, clientX: number, clientY: number) => {
+      const current = viewer.currentScale
+      if (!viewer.pagesCount || !current) return
+      pendingFactor *= factor
+      const target = Math.min(MAX_SCALE, Math.max(MIN_SCALE, current * pendingFactor))
+      if (Math.round(target * 100) === Math.round(current * 100)) {
+        // At a limit there is nothing to collect.
+        if (target === MIN_SCALE || target === MAX_SCALE) pendingFactor = 1
+        return
+      }
+      pendingFactor = 1
+      // PDF.js takes the origin relative to the scroll container.
+      const box = container.getBoundingClientRect()
+      viewer.updateScale({
+        scaleFactor: target / current,
+        origin: [clientX - box.left, clientY - box.top],
+        drawingDelay: GESTURE_DRAWING_DELAY,
+      })
+    }
+
+    // Chrome and Firefox report a pinch as a wheel event with ctrlKey.
+    let gesturing = false
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      // Otherwise the browser zooms the whole page.
+      event.preventDefault()
+      if (!gesturing) {
+        zoomAt(Math.exp(-wheelDelta(event) * WHEEL_ZOOM_SPEED), event.clientX, event.clientY)
+      }
+    }
+    // Safari reports a pinch as gesture events with a running scale.
+    let gestureScale = 1
+    const onGestureStart = (event: Event) => {
+      event.preventDefault()
+      gesturing = true
+      gestureScale = 1
+    }
+    const onGestureChange = (event: Event) => {
+      event.preventDefault()
+      const gesture = event as GestureEvent
+      zoomAt(gesture.scale / gestureScale, gesture.clientX, gesture.clientY)
+      gestureScale = gesture.scale
+    }
+    const onGestureEnd = (event: Event) => {
+      event.preventDefault()
+      gesturing = false
+    }
+    container.addEventListener('wheel', onWheel, { passive: false })
+    container.addEventListener('gesturestart', onGestureStart)
+    container.addEventListener('gesturechange', onGestureChange)
+    container.addEventListener('gestureend', onGestureEnd)
 
     let cancelled = false
     const loadingTask = loadPdf(url)
