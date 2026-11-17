@@ -179,16 +179,18 @@ export function PdfViewer({ url, highlights, focus, onLinkClick, children }: Pro
       resizeObserver.disconnect()
       viewerRef.current = null
       readyRef.current = false
-      // PDF.js is still fetching the pages of a document that was just
-      // opened. Destroying it under that makes every page fail loudly, so
-      // wait until the pages are in, but not forever.
+      container.remove()
+      // PDF.js may still be fetching the pages of a document that was just
+      // opened. Taking the document away under it makes every pending page
+      // fail loudly, so let it finish first, but do not wait forever.
       const pagesLoaded: Promise<unknown> = viewer.pagesPromise ?? Promise.resolve()
       const timeout = new Promise(resolve => setTimeout(resolve, DESTROY_TIMEOUT_MS))
-      viewer.setDocument(null)
       Promise.race([pagesLoaded, timeout])
         .catch(() => {})
-        .then(() => loadingTask.destroy())
-      container.remove()
+        .then(() => {
+          viewer.setDocument(null)
+          loadingTask.destroy()
+        })
     }
   }, [url])
 
