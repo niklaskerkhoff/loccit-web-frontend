@@ -40,14 +40,21 @@ Other scripts: `npm run lint`, `npm run format`.
   desktop shell).
 - `src/pdf/` – `PdfViewer`, a wrapper around the PDF.js viewer components
   (lazy page rendering, text layer, internal links, zoom). Clicks on link
-  annotations can be intercepted, which is how citations are caught.
+  annotations can be intercepted, which is how citations are caught. It marks
+  rectangles given in PDF coordinates and scrolls to a passage.
 - `src/pages/` – start page (upload, recent documents) and document page
   (the two columns).
-- `src/components/` – what the right column shows: the paper, "Paper nicht
-  gefunden", or the choice between versions.
+- `src/components/` – what the right column shows: the result of the check
+  (verdict, passages, run details), the paper, "Paper nicht gefunden", or the
+  choice between versions.
+- `src/useCheck.ts` – keeps the check of the open citation group in step with
+  the selected model and thinking level, and decides when a check starts.
 - `src/labels.ts` – German wording for the codes the backend reports.
 - `scripts/copy-pdfjs-assets.mjs` – copies the files PDF.js loads at runtime
   into `public/pdfjs` (runs before `dev` and `build`).
 
 Routes are hash routes (`#/doc/<id>`) and asset URLs are relative, so the
 build needs no server-side routing.
+
+Keyboard: `J` / `K` (or Alt+↓ / Alt+↑) step through the passages, `←` / `→`
+through the sources of a citation group.
