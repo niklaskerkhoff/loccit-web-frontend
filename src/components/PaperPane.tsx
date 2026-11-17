@@ -1,9 +1,11 @@
 import { Badge, Box, Button, Flex, IconButton, NativeSelect, Text } from '@chakra-ui/react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { LuChevronLeft, LuChevronRight, LuCircleHelp, LuTriangleAlert } from 'react-icons/lu'
 import { type CitationGroup, type Source, chooseItem, choosePdf, paperPdfUrl } from '../api'
 import { authorsLabel, shortLabel } from '../labels'
-import { PdfViewer } from '../pdf/PdfViewer'
+import { type Focus, type Highlight, PdfViewer } from '../pdf/PdfViewer'
+import type { CheckController } from '../useCheck'
+import { CheckBar, CheckControls } from './CheckBar'
 import { PaperNotFound } from './PaperNotFound'
 import { VersionChoice } from './VersionChoice'
 
@@ -12,42 +14,66 @@ type Props = {
   sources: Record<string, Source>
   // Which citation of the group is shown.
   index: number
+  // Which passage of the check is the current one.
+  passage: number | null
+  check: CheckController
   reloading: boolean
   onSelect: (index: number) => void
+  onPassage: (index: number) => void
   // A choice was stored; the sources have to be fetched again.
   onChanged: () => Promise<void>
   onReload: () => void
 }
 
-// The right column: the citations of the clicked group and, for the selected
-// one, its paper, the reason why there is none, or the versions to choose from.
-export function PaperPane({
-  group,
-  sources,
-  index,
-  reloading,
-  onSelect,
-  onChanged,
-  onReload,
-}: Props) {
+// The right column: the citations of the clicked group, the result of the
+// check, and for the selected citation its paper, the reason why there is
+// none, or the versions to choose from.
+export function PaperPane(props: Props) {
+  const { group, sources, index, passage, check, onSelect, onPassage } = props
   const count = group.citations.length
   const citation = group.citations[Math.min(index, count - 1)]
   const source = sources[citation.key]
+  const run = check.busy ? null : (check.check?.run ?? null)
+  const passageCount = run?.passages.length ?? 0
 
   useEffect(() => {
-    if (count < 2) return
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement
-      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.metaKey || event.ctrlKey) return
       if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return
-      if (event.key === 'ArrowLeft') onSelect((index + count - 1) % count)
-      else if (event.key === 'ArrowRight') onSelect((index + 1) % count)
-      else return
+      const key = event.key.toLowerCase()
+      const next = key === 'j' || (event.altKey && key === 'arrowdown')
+      const previous = key === 'k' || (event.altKey && key === 'arrowup')
+      if (passageCount > 0 && (next || previous)) {
+        onPassage(((passage ?? -1) + (next ? 1 : -1) + passageCount) % passageCount)
+      } else if (count > 1 && !event.altKey && key === 'arrowleft') {
+        onSelect((index + count - 1) % count)
+      } else if (count > 1 && !event.altKey && key === 'arrowright') {
+        onSelect((index + 1) % count)
+      } else {
+        return
+      }
       event.preventDefault()
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [count, index, onSelect])
+  }, [count, index, passage, passageCount, onSelect, onPassage])
+
+  // All passages in the shown paper are marked, the current one strongly.
+  const highlights = useMemo<Highlight[]>(
+    () =>
+      (run?.passages ?? []).flatMap((item, position) =>
+        item.cite_key === citation.key
+          ? item.rects.map(({ page, rect }) => ({ page, rect, active: position === passage }))
+          : [],
+      ),
+    [run, citation.key, passage],
+  )
+  const current = passage === null ? undefined : run?.passages[passage]
+  const focus: Focus | null =
+    run && current && current.cite_key === citation.key
+      ? { ...current.rects[0], key: `${run.id}:${passage}` }
+      : null
 
   return (
     <Flex direction='column' height='100%' minWidth={0}>
@@ -65,7 +91,7 @@ export function PaperPane({
           />
         ))}
         {count > 1 && (
-          <Flex align='center' ml='auto'>
+          <Flex align='center'>
             <IconButton
               aria-label='Vorherige Quelle der Gruppe'
               title='Vorherige Quelle (←)'
@@ -89,15 +115,19 @@ export function PaperPane({
             </IconButton>
           </Flex>
         )}
+        <CheckControls check={check} />
       </Flex>
+      <CheckBar check={check} sources={sources} passage={passage} onPassage={onPassage} />
       {source && (
         // The key resets "change version" when another citation is selected.
         <SourceView
           key={citation.key}
           source={source}
-          reloading={reloading}
-          onChanged={onChanged}
-          onReload={onReload}
+          highlights={highlights}
+          focus={focus}
+          reloading={props.reloading}
+          onChanged={props.onChanged}
+          onReload={props.onReload}
         />
       )}
     </Flex>
@@ -132,6 +162,8 @@ function CitationChip(props: {
 
 function SourceView(props: {
   source: Source
+  highlights: Highlight[]
+  focus: Focus | null
   reloading: boolean
   onChanged: () => Promise<void>
   onReload: () => void
@@ -196,6 +228,7 @@ function SourceView(props: {
               <Badge colorPalette='yellow'>{source.pdfs.length} PDFs am Eintrag</Badge>
               <NativeSelect.Root size='xs' width='auto' maxWidth='22em'>
                 <NativeSelect.Field
+                  aria-label='PDF des Eintrags'
                   value={source.attachment_key}
                   onChange={event => pickPdf(event.target.value)}
                 >
@@ -220,7 +253,11 @@ function SourceView(props: {
         {source.status === 'choice_needed' || changingVersion ? (
           <VersionChoice source={source} onPick={pickVersion} />
         ) : source.attachment_key ? (
-          <PdfViewer url={paperPdfUrl(source.attachment_key)} />
+          <PdfViewer
+            url={paperPdfUrl(source.attachment_key)}
+            highlights={props.highlights}
+            focus={props.focus}
+          />
         ) : (
           <PaperNotFound source={source} reloading={props.reloading} onReload={props.onReload} />
         )}

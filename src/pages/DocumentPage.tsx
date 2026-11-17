@@ -9,9 +9,11 @@ import {
   Splitter,
   Text,
 } from '@chakra-ui/react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { LuArrowLeft, LuRefreshCw } from 'react-icons/lu'
 import {
+  type Check,
+  type CitationGroup,
   type Document,
   type DocumentCitations,
   documentPdfUrl,
@@ -20,11 +22,21 @@ import {
 } from '../api'
 import { PaperPane } from '../components/PaperPane'
 import { zoteroProblem } from '../labels'
-import { PdfViewer } from '../pdf/PdfViewer'
+import { type Highlight, PdfViewer } from '../pdf/PdfViewer'
 import { openStartPage } from '../routing'
+import { useCheck } from '../useCheck'
 
-// The citation shown on the right: a group and one citation in it.
-type Active = { groupId: number; index: number }
+// What the right column shows: a citation group, one citation in it, and
+// the current passage of its check. `token` changes with every click on a
+// citation.
+type Active = { groupId: number; index: number; passage: number | null; token: number }
+
+function citationIndex(group: CitationGroup, citeKey: string): number {
+  return Math.max(
+    0,
+    group.citations.findIndex(citation => citation.key === citeKey),
+  )
+}
 
 export function DocumentPage({ documentId }: { documentId: number }) {
   const [document, setDocument] = useState<Document | null>(null)
@@ -32,12 +44,16 @@ export function DocumentPage({ documentId }: { documentId: number }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState<Active | null>(null)
+  // Counts how often the sources were read; stored checks are then refetched.
+  const [version, setVersion] = useState(0)
+  const clicks = useRef(0)
 
   // `reload` reads the Zotero library again, e.g. after a PDF was added there.
   const load = async (reload: boolean) => {
     setLoading(true)
     try {
       setData(await getCitations(documentId, reload))
+      setVersion(version => version + 1)
       setError(null)
     } catch (error) {
       setError((error as Error).message)
@@ -63,7 +79,7 @@ export function DocumentPage({ documentId }: { documentId: number }) {
 
   // Link annotation ("<page>:<annotation id>") -> the citation it belongs to.
   const citationLinks = useMemo(() => {
-    const links = new Map<string, Active>()
+    const links = new Map<string, { groupId: number; index: number }>()
     for (const group of data?.groups ?? []) {
       group.citations.forEach((citation, index) => {
         for (const id of citation.annotation_ids) {
@@ -78,13 +94,54 @@ export function DocumentPage({ documentId }: { documentId: number }) {
     (annotationId: string, pageIndex: number) => {
       const citation = citationLinks.get(`${pageIndex}:${annotationId}`)
       if (!citation) return false
-      setActive(citation)
+      clicks.current += 1
+      setActive({ ...citation, passage: null, token: clicks.current })
       return true
     },
     [citationLinks],
   )
 
   const group = active ? data?.groups[active.groupId] : undefined
+
+  // A result arrived: jump to its strongest passage, in whichever paper.
+  const onResult = (check: Check) => {
+    const strongest = check.run?.passages[0]
+    if (!group || !strongest) return
+    setActive(
+      active =>
+        active && { ...active, passage: 0, index: citationIndex(group, strongest.cite_key) },
+    )
+  }
+  const check = useCheck(
+    documentId,
+    data?.zotero.status === 'ok' ? (active?.groupId ?? null) : null,
+    version,
+    active?.token ?? 0,
+    onResult,
+  )
+  const passages = check.check?.run?.passages ?? []
+
+  // The arrows run over all passages; the paper follows the passage.
+  const showPassage = (passage: number) => {
+    if (!group || !passages[passage]) return
+    const index = citationIndex(group, passages[passage].cite_key)
+    setActive(active => active && { ...active, passage, index })
+  }
+  // Selecting a citation of the group shows its first passage, if it has one.
+  const showCitation = (index: number) => {
+    if (!group) return
+    const first = passages.findIndex(passage => passage.cite_key === group.citations[index].key)
+    setActive(active => active && { ...active, index, passage: first === -1 ? null : first })
+  }
+
+  // The clicked citation stays marked in the thesis.
+  const thesisHighlights = useMemo<Highlight[]>(
+    () =>
+      (group?.citations ?? []).flatMap((citation, index) =>
+        citation.rects.map(rect => ({ page: group!.page, rect, active: index === active?.index })),
+      ),
+    [group, active?.index],
+  )
   const sources = Object.values(data?.sources ?? {})
   const missing = sources.filter(source =>
     ['no_entry', 'no_pdf', 'file_missing'].includes(source.status),
@@ -143,7 +200,11 @@ export function DocumentPage({ documentId }: { documentId: number }) {
       >
         <Splitter.Panel id='thesis'>
           {document ? (
-            <PdfViewer url={documentPdfUrl(document)} onLinkClick={onLinkClick} />
+            <PdfViewer
+              url={documentPdfUrl(document)}
+              highlights={thesisHighlights}
+              onLinkClick={onLinkClick}
+            />
           ) : (
             !error && <Centered>{<Spinner />}</Centered>
           )}
@@ -168,8 +229,11 @@ export function DocumentPage({ documentId }: { documentId: number }) {
                   group={group}
                   sources={data.sources}
                   index={active.index}
+                  passage={active.passage}
+                  check={check}
                   reloading={loading}
-                  onSelect={index => setActive({ groupId: group.id, index })}
+                  onSelect={showCitation}
+                  onPassage={showPassage}
                   onChanged={() => load(false)}
                   onReload={() => load(true)}
                 />
